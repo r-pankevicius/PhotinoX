@@ -2,9 +2,32 @@
   <!-- Imports -->
   <Import Project="$(MSBuildThisFileDirectory)..\Directory.Build.props" Condition="Exists('$(MSBuildThisFileDirectory)..\Directory.Build.props')" />
 
+  <!-- Optional, git-ignored local overrides (e.g. to force a specific TFM) -->
+  <Import Project="$(MSBuildThisFileDirectory)Directory.Build.local.props" Condition="Exists('$(MSBuildThisFileDirectory)Directory.Build.local.props')" />
+
   <!-- Project properties -->
   <PropertyGroup>
     <LangVersion>14</LangVersion>
+  </PropertyGroup>
+
+  <!-- Target frameworks -->
+  <PropertyGroup>
+    <!-- Full set of frameworks the projects officially support (used by CI / packaging). -->
+    <SupportedTargetFrameworks>net8.0;net9.0;net10.0</SupportedTargetFrameworks>
+
+    <!-- For a faster local inner-loop, build a single TFM.
+         Opt in by setting LocalDev=true as an environment variable, an MSBuild
+         property (-p:LocalDev=true), or in a git-ignored Directory.Build.local.props.
+         Must be stable across evaluation AND build so Visual Studio stays consistent
+         (do NOT toggle it via BuildingInsideVisualStudio). -->
+    <LocalDevTargetFramework Condition="'$(LocalDevTargetFramework)' == ''">net10.0</LocalDevTargetFramework>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <!-- Shared value referenced by each project's <TargetFrameworks>.
+         Stable across evaluation and build (no BuildingInsideVisualStudio toggling). -->
+    <ProjectTargetFrameworks Condition="'$(LocalDev)' == 'true'">$(LocalDevTargetFramework)</ProjectTargetFrameworks>
+    <ProjectTargetFrameworks Condition="'$(ProjectTargetFrameworks)' == ''">$(SupportedTargetFrameworks)</ProjectTargetFrameworks>
   </PropertyGroup>
 
 </Project>

@@ -288,6 +288,21 @@ dotnet pack    Photino.NET/PhotinoX.csproj -c Release -o artifacts
 ```
 > CI: see [`.github/workflows/build.yml`](https://github.com/ivanvoyager/PhotinoX/blob/master/.github/workflows/build.yml) (build + pack + upload `.nupkg`/`.snupkg`).
 
+## Developing
+
+You don't need to build for all target platforms to do everyday development or experiment with samples.
+To use only `net10.0` create file `Directory.Build.local.props` in project root with the following content:
+```xml
+<Project>
+  <PropertyGroup>
+	<!-- Local development: build a single TFM ($(LocalDevTargetFramework), default net10.0)
+		 for a faster inner-loop. This file is git-ignored and per-developer.
+		 Remove or set to false to build all supported frameworks locally. -->
+	<LocalDev>true</LocalDev>
+  </PropertyGroup>
+</Project>
+```
+
 ## Contributing
 
 Issues and PRs are welcome. Keep PRs focused, minimal, and consistent with the rest of PhotinoX.
