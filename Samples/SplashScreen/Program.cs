@@ -9,6 +9,8 @@ var app = new PhotinoApplication
     ShutdownMode = PhotinoShutdownMode.OnMainWindowClose
 };
 
+string splashHtmlPath = Path.Combine(AppContext.BaseDirectory, "wwwroot", "splash.html");
+
 var splashWindow = new PhotinoWindow()
     .SetTitle("PhotinoX")
     .SetChromeless(true)
@@ -16,7 +18,7 @@ var splashWindow = new PhotinoWindow()
     .SetUseOsDefaultSize(false)
     .SetSize(480, 300)
     .Center()
-    .Load("wwwroot/splash.html");
+    .Load(splashHtmlPath);
 
 app.Startup += (_, _) =>
 {
@@ -25,7 +27,7 @@ app.Startup += (_, _) =>
 };
 
 WebApplication? webApplication = null;
-var exitCode = app.Run();
+int exitCode = app.Run();
 
 if (webApplication is not null)
 {
@@ -83,7 +85,11 @@ async Task StartApplicationAsync()
 
 async Task<WebApplication> StartWebApplicationAsync(string[] args)
 {
-    var builder = WebApplication.CreateBuilder(args);
+    var builder = WebApplication.CreateBuilder(new WebApplicationOptions
+    {
+        Args = args,
+        ContentRootPath = AppContext.BaseDirectory
+    });
 
     builder.WebHost.ConfigureKestrel(options =>
     {
