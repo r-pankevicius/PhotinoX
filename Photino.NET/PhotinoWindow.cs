@@ -21,7 +21,8 @@ public partial class PhotinoWindow
 
         Window = new()
         {
-            Title = DefaultTitle
+            Title = DefaultTitle,
+            ShowOnInitialize = true
         },
 
         Callbacks = new()
@@ -119,6 +120,24 @@ public partial class PhotinoWindow
     /// Gets a value indicating whether the window has already been closed.
     /// </summary>
     public bool IsClosed { get; private set; }
+
+    /// <summary>
+    /// Gets a value indicating whether the native window is visible.
+    /// </summary>
+    public bool IsVisible
+    {
+        get
+        {
+            if (_nativeInstance == IntPtr.Zero)
+                return false;
+
+            return Dispatcher.Invoke(static nativeInstance =>
+            {
+                Photino_GetVisible(nativeInstance, out byte visible);
+                return visible != 0;
+            }, _nativeInstance);
+        }
+    }
 
     /// <summary>
     /// Gets the platform-specific native window reference.
@@ -333,13 +352,17 @@ public partial class PhotinoWindow
     }
 
     /// <summary>
-    /// When true, the native window and browser control can be displayed with transparent background.
-    /// Html document's body background must have alpha-based value.
-    /// WebView2 on Windows can only be fully transparent or fully opaque.
-    /// By default, this is set to false.
+    /// Gets or sets whether the native window and browser control are displayed with a transparent background.
+    /// The HTML document body must use an alpha-based background color.
+    /// WebView2 on Windows supports only fully transparent or fully opaque backgrounds.
+    /// Default is <see langword="false"/>.
     /// </summary>
+    /// <remarks>
+    /// On Windows, transparent windows must be chromeless.
+    /// </remarks>
     /// <exception cref="InvalidOperationException">
-    /// On Windows, thrown if trying to set value after native window is initialized.
+    /// On Windows, thrown when enabling transparency for a non-chromeless window
+    /// or for a window that was not initialized with transparency enabled.
     /// </exception>
     public bool Transparent
     {
@@ -365,7 +388,13 @@ public partial class PhotinoWindow
             }
 
             if (Platform.IsWindows)
-                throw new InvalidOperationException("Transparent can only be set on Windows before the native window is instantiated.");
+            {
+                if (value && !Chromeless)
+                    throw new InvalidOperationException("Transparent windows must be chromeless on Windows.");
+
+                if (value && !_startupParameters.Window.Transparent)
+                    throw new InvalidOperationException("Transparency must be enabled before window initialization on Windows.");
+            }
 
             Log($"Invoking {nameof(Photino_SetTransparentEnabled)}({value})");
 
@@ -1002,30 +1031,28 @@ public partial class PhotinoWindow
         Log($".{nameof(Activate)}()");
         ThrowIfClosedOrNotInitialized();
 
-        return Dispatcher.Invoke(
-            static nativeInstance => Photino_Activate(nativeInstance),
-            _nativeInstance);
+        return Dispatcher.Invoke(static nativeInstance => Photino_Activate(nativeInstance), _nativeInstance);
     }
 
     /// <summary>
-    /// Creates and shows the native Photino window.
+    /// Initializes the native Photino window and WebView without showing the window.
     /// </summary>
     /// <remarks>
-    /// If the native window has already been created, this method shows the existing window.
-    /// A closed window cannot be shown again.
+    /// This method starts initial content loading and raises the window creation events.
+    /// If the native window has already been initialized, this method has no effect.
+    /// A closed window cannot be initialized again.
     /// </remarks>
-    public void Show()
+    public void Initialize()
+    {
+        InitializeCore(showOnInitialize: false);
+    }
+
+    private void InitializeCore(bool showOnInitialize)
     {
         ThrowIfClosed();
 
         if (_nativeInstance != IntPtr.Zero)
-        {
-            bool shown = Dispatcher.Invoke(static nativeInstance => Photino_Show(nativeInstance), _nativeInstance);
-            Debug.Assert(shown, "Failed to show the native window.");
-            if (!shown)
-                throw new InvalidOperationException("Failed to show the native window.");
             return;
-        }
 
         ThrowIfCreating();
 
@@ -1047,6 +1074,8 @@ public partial class PhotinoWindow
         PrepareAndValidateStartupParameters();
         ThrowIfInitializedForCall();
 
+        _startupParameters.Window.ShowOnInitialize = showOnInitialize;
+
         var handle = GCHandle.Alloc(this);
         _startupParameters.Callbacks.CallbackState = GCHandle.ToIntPtr(handle);
         try
@@ -1062,13 +1091,63 @@ public partial class PhotinoWindow
             _startupParameters.Callbacks.CallbackState = IntPtr.Zero;
             handle.Free();
 
-            int lastError = 0;
-            if (Platform.IsWindows)
-                lastError = Marshal.GetLastWin32Error();
+            int lastError = Platform.IsWindows ? Marshal.GetLastWin32Error() : 0;
 
             Log($"Error #{lastError}{Environment.NewLine}{ex}");
-            throw new ExternalException($"Native code exception. Error # {lastError}. See inner exception for details.", ex) { HResult = lastError };
+
+            throw new ExternalException($"Native code exception. Error # {lastError}. See inner exception for details.", ex)
+            {
+                HResult = lastError
+            };
         }
+    }
+
+    /// <summary>
+    /// Initializes and shows the native Photino window.
+    /// </summary>
+    /// <remarks>
+    /// If the native window has not been initialized, this method initializes it before showing it.
+    /// If the window is hidden, this method shows the existing native window.
+    /// A closed window cannot be shown again.
+    /// </remarks>
+    public void Show()
+    {
+        ThrowIfClosed();
+
+        if (_nativeInstance != IntPtr.Zero)
+        {
+            bool shown = Dispatcher.Invoke(static nativeInstance => Photino_Show(nativeInstance), _nativeInstance);
+            Debug.Assert(shown, "Failed to show the native window.");
+
+            if (!shown)
+                throw new InvalidOperationException("Failed to show the native window.");
+
+            return;
+        }
+
+        InitializeCore(showOnInitialize: true);
+    }
+
+    /// <summary>
+    /// Hides the native Photino window without closing it.
+    /// </summary>
+    /// <remarks>
+    /// The window remains initialized and can be shown again.
+    /// If the native window has not been initialized, this method has no effect.
+    /// A closed window cannot be hidden.
+    /// </remarks>
+    public void Hide()
+    {
+        ThrowIfClosed();
+
+        if (_nativeInstance == IntPtr.Zero)
+            return;
+
+        bool hidden = Dispatcher.Invoke(static nativeInstance => Photino_Hide(nativeInstance), _nativeInstance);
+        Debug.Assert(hidden, "Failed to hide the native window.");
+
+        if (!hidden)
+            throw new InvalidOperationException("Failed to hide the native window.");
     }
 
     /// <summary>
@@ -1121,59 +1200,6 @@ public partial class PhotinoWindow
             throw new ArgumentException($"Startup parameters are not valid:{Environment.NewLine}" +
                                         string.Join(Environment.NewLine, errors.Select(e => $" - {e}")));
         }
-    }
-
-    /// <summary>
-    /// Sends a message to the native browser control's JavaScript context.
-    /// </summary>
-    /// <remarks>
-    /// In JavaScript, messages can be received via <code>window.external.receiveMessage(message)</code>
-    /// </remarks>
-    /// <exception cref="InvalidOperationException">
-    /// Thrown when the window is not initialized or has already been closed.
-    /// </exception>
-    /// <param name="message">Message as string</param>
-    public void SendWebMessage(string message)
-    {
-        Log($".{nameof(SendWebMessage)}({message})");
-        ThrowIfClosedOrNotInitialized();
-
-        Dispatcher.Invoke(static state =>
-        {
-            Photino_SendWebMessage(state.NativeInstance, state.Message);
-        }, (NativeInstance: _nativeInstance, Message: message));
-    }
-
-    /// <summary>
-    /// Sends a message asynchronously to the native browser control's JavaScript context.
-    /// </summary>
-    /// <remarks>
-    /// In JavaScript, messages can be received via <code>window.external.receiveMessage(message)</code>.
-    /// </remarks>
-    /// <param name="message">
-    /// The message to send.
-    /// </param>
-    /// <param name="cancellationToken">
-    /// A cancellation token to observe while waiting for the operation to complete.
-    /// </param>
-    /// <returns>
-    /// A task that represents the asynchronous send operation.
-    /// </returns>
-    /// <exception cref="InvalidOperationException">
-    /// Thrown when the window is not initialized or has already been closed.
-    /// </exception>
-    /// <exception cref="OperationCanceledException">
-    /// Thrown when <paramref name="cancellationToken"/> is canceled.
-    /// </exception>
-    public Task SendWebMessageAsync(string message, CancellationToken cancellationToken = default)
-    {
-        Log($".{nameof(SendWebMessageAsync)}({message})");
-        ThrowIfClosedOrNotInitialized();
-
-        return Dispatcher.InvokeAsync(static state =>
-        {
-            Photino_SendWebMessage(state.NativeInstance, state.Message);
-        }, (NativeInstance: _nativeInstance, Message: message), cancellationToken);
     }
 
     /// <summary>

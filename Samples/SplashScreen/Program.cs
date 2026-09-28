@@ -6,7 +6,8 @@ using Photino.NET;
 
 var app = new PhotinoApplication
 {
-    ShutdownMode = PhotinoShutdownMode.OnMainWindowClose
+    ShutdownMode = PhotinoShutdownMode.OnMainWindowClose,
+    NotificationsEnabled = false
 };
 
 string splashHtmlPath = Path.Combine(AppContext.BaseDirectory, "wwwroot", "splash.html");
@@ -15,16 +16,30 @@ var splashWindow = new PhotinoWindow()
     .SetTitle("PhotinoX")
     .SetChromeless(true)
     .SetResizable(false)
-    .SetUseOsDefaultSize(false)
     .SetSize(480, 300)
     .Center()
     .Load(splashHtmlPath);
 
-app.Startup += (_, _) =>
+splashWindow.RegisterInitialContentLoadedHandler((_, __) =>
 {
-    splashWindow.Show();
-    _ = StartApplicationAsync();
-};
+    _ = ShowSplashAsync();
+});
+
+async Task ShowSplashAsync()
+{
+    await Task.Delay(100); // Allow the WebView surface to be presented before showing the native window.
+
+    app.Dispatcher.BeginInvoke(() =>
+    {
+        splashWindow.Show();
+        _ = StartApplicationAsync();
+    });
+}
+
+app.RegisterStartupHandler((_, _) =>
+{
+    splashWindow.Initialize();
+});
 
 WebApplication? webApplication = null;
 int exitCode = app.Run();
@@ -57,7 +72,6 @@ async Task StartApplicationAsync()
         {
             var mainWindow = new PhotinoWindow()
                 .SetTitle("PhotinoX Splash Screen Sample")
-                .SetUseOsDefaultSize(false)
                 .SetSize(1200, 820)
                 .Center()
                 .Load(address);
